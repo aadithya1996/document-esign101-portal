@@ -165,7 +165,7 @@ with docs_col:
                         st.caption(f"{size_mb:.2f} MB")
                     
                     with col_actions:
-                        btn_col1, btn_col2 = st.columns(2)
+                        btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
                         
                         with btn_col1:
                             download_url = get_download_url(doc.get('file_path', ''))
@@ -173,6 +173,21 @@ with docs_col:
                                 st.link_button("⬇️", download_url, use_container_width=True)
                         
                         with btn_col2:
+                            # Share Button / Popover
+                            with st.popover("🔗", use_container_width=True):
+                                st.markdown("### Share Document")
+                                st.caption(f"Share **{doc.get('file_name')}** externally.")
+                                
+                                recipient = st.text_input("Recipient Email", key=f"share_email_{doc['id']}")
+                                if st.button("Send Link", key=f"share_btn_{doc['id']}", type="primary"):
+                                    if not recipient:
+                                        st.error("Email required.")
+                                    else:
+                                        from utils.share_utils import create_share
+                                        with st.spinner("Sending..."):
+                                            create_share(doc['id'], doc.get('file_name'), recipient)
+                        
+                        with btn_col3:
                             if st.button("🗑️", key=f"del_{doc['id']}", use_container_width=True):
                                 success, msg = delete_document(doc['id'], doc['file_path'])
                                 if success:
