@@ -3,7 +3,7 @@ Public View Document Page
 Accepts share_id from URL, verifies OTP, and shows document.
 """
 import streamlit as st
-from utils.share_utils import verify_share_access
+from utils.share_utils import verify_share_access, stream_shared_document_summary
 from utils.storage_utils import get_download_url
 
 st.set_page_config(
@@ -95,10 +95,41 @@ else:
         
         from utils.share_utils import get_public_download_url
         download_url = get_public_download_url(file_path)
-        
+        document_id = data.get("document_id")
+
         if download_url:
-            st.link_button("⬇️ Download PDF", download_url, type="primary", use_container_width=True)
-            
+            # Action buttons row
+            btn_col1, btn_col2 = st.columns(2)
+
+            with btn_col1:
+                st.link_button("⬇️ Download PDF", download_url, type="primary", use_container_width=True)
+
+            with btn_col2:
+                # AI Summary Button / Popover
+                with st.popover("📝 AI Summary", use_container_width=True):
+                    st.markdown("### AI Summary")
+
+                    # Check for existing summary first
+                    from utils.share_utils import get_public_download_url
+                    import os
+                    from supabase import create_client
+
+                    existing_summary = None
+                    service_key = os.getenv("SUPABASE_SERVICE_KEY")
+                    if service_key:
+                        admin_client = create_client(os.getenv("SUPABASE_URL"), service_key)
+                        result = admin_client.table("document_summaries").select("summary").eq("document_id", document_id).execute()
+                        if result.data:
+                            existing_summary = result.data[0]["summary"]
+
+                    if existing_summary:
+                        st.write(existing_summary)
+                    else:
+                        if st.button("Generate Summary", type="primary", use_container_width=True):
+                            st.write_stream(stream_shared_document_summary(document_id, file_path))
+                        else:
+                            st.caption("Click to generate an AI summary of this document.")
+
             # Preview (iframe)
             st.markdown("### Preview")
             st.markdown(f'<iframe src="{download_url}" width="100%" height="600px"></iframe>', unsafe_allow_html=True)

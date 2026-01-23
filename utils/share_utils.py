@@ -184,3 +184,100 @@ def get_public_download_url(file_path: str) -> Optional[str]:
     except Exception as e:
         print(f"Error generating link: {e}")
         return None
+
+
+def get_shared_document_summary(document_id: str, file_path: str) -> dict:
+    """
+    Get or create AI summary for a shared document.
+    Uses service key to bypass RLS for public access.
+    """
+    import os
+    from supabase import create_client
+
+    url = os.getenv("SUPABASE_URL")
+    service_key = os.getenv("SUPABASE_SERVICE_KEY")
+
+    if not service_key:
+        return {"summary": "AI Summary not available (service key not configured).", "error": True}
+
+    try:
+        admin_client = create_client(url, service_key)
+
+        # Check if summary exists
+        result = admin_client.table("document_summaries").select("*").eq("document_id", document_id).execute()
+
+        if result.data:
+            return result.data[0]
+
+        # Generate new summary
+        from utils.pdf_utils import extract_text_from_pdf
+        from utils.ai_utils import generate_summary
+
+        # Download PDF using service key
+        pdf_bytes = admin_client.storage.from_("documents").download(file_path)
+        text = extract_text_from_pdf(pdf_bytes)
+
+        if not text:
+            return {"summary": "Could not extract text from PDF.", "error": True}
+
+        summary_data = generate_summary(text)
+
+        # Store summary
+        admin_client.table("document_summaries").insert({
+            "document_id": document_id,
+            "summary": summary_data["summary"],
+            "model_used": summary_data["model"]
+        }).execute()
+
+        return summary_data
+
+    except Exception as e:
+        print(f"Error generating summary: {e}")
+        return {"summary": f"Error generating summary: {e}", "error": True}
+
+
+def stream_shared_document_summary(document_id: str, file_path: str):
+    """
+    Stream summary generation for shared documents and save when complete.
+    Uses service key to bypass RLS for public access.
+    Yields chunks for st.write_stream().
+    """
+    import os
+    from supabase import create_client
+
+    url = os.getenv("SUPABASE_URL")
+    service_key = os.getenv("SUPABASE_SERVICE_KEY")
+
+    if not service_key:
+        yield "AI Summary not available (service key not configured)."
+        return
+
+    try:
+        admin_client = create_client(url, service_key)
+
+        from utils.pdf_utils import extract_text_from_pdf
+        from utils.ai_utils import generate_summary_stream
+
+        # Download PDF using service key
+        pdf_bytes = admin_client.storage.from_("documents").download(file_path)
+        text = extract_text_from_pdf(pdf_bytes)
+
+        if not text:
+            yield "Could not extract text from PDF."
+            return
+
+        # Collect full summary while streaming
+        full_summary = ""
+        for chunk in generate_summary_stream(text):
+            full_summary += chunk
+            yield chunk
+
+        # Save to database after streaming completes
+        admin_client.table("document_summaries").insert({
+            "document_id": document_id,
+            "summary": full_summary,
+            "model_used": "gpt-4"
+        }).execute()
+
+    except Exception as e:
+        yield f"Error generating summary: {e}"

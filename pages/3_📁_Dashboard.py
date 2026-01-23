@@ -5,14 +5,16 @@ Protected page requiring authentication
 import streamlit as st
 from utils.auth_utils import require_auth, get_current_user, logout
 from utils.storage_utils import (
-    upload_pdf, 
-    list_documents, 
-    get_download_url, 
+    upload_pdf,
+    list_documents,
+    get_download_url,
     delete_document,
     fetch_user_tenants,
     set_current_tenant,
-    get_user_tenant_id
+    get_user_tenant_id,
+    stream_and_save_summary
 )
+from utils.supabase_client import init_supabase
 
 st.set_page_config(
     page_title="Dashboard | Document E-Sign Portal",
@@ -150,7 +152,8 @@ with docs_col:
             # Document grid
             for doc in filtered_docs:
                 with st.container():
-                    col_icon, col_name, col_size, col_actions = st.columns([0.5, 3, 1, 1.5])
+                    # Adjusted ratios: Less for icon/size, MORE for actions (1.5 -> 2.2) to fit 4 buttons
+                    col_icon, col_name, col_size, col_actions = st.columns([0.3, 2.7, 0.8, 2.2])
                     
                     with col_icon:
                         st.markdown("📄")
@@ -165,19 +168,20 @@ with docs_col:
                         st.caption(f"{size_mb:.2f} MB")
                     
                     with col_actions:
-                        btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
-                        
+                        # Use small gap to keep buttons tight but distinct. 4 columns.
+                        btn_col1, btn_col2, btn_col3, btn_col4 = st.columns(4, gap="small")
+
                         with btn_col1:
                             download_url = get_download_url(doc.get('file_path', ''))
                             if download_url:
-                                st.link_button("⬇️", download_url, use_container_width=True)
-                        
+                                st.link_button("⬇️", download_url, use_container_width=True, help=f"Download {doc.get('file_name')}")
+
                         with btn_col2:
                             # Share Button / Popover
-                            with st.popover("🔗", use_container_width=True):
+                            with st.popover("🔗", use_container_width=True, help="Share Document"):
                                 st.markdown("### Share Document")
                                 st.caption(f"Share **{doc.get('file_name')}** externally.")
-                                
+
                                 recipient = st.text_input("Recipient Email", key=f"share_email_{doc['id']}")
                                 if st.button("Send Link", key=f"share_btn_{doc['id']}", type="primary"):
                                     if not recipient:
@@ -186,16 +190,31 @@ with docs_col:
                                         from utils.share_utils import create_share
                                         with st.spinner("Sending..."):
                                             create_share(doc['id'], doc.get('file_name'), recipient)
-                        
+
                         with btn_col3:
-                            if st.button("🗑️", key=f"del_{doc['id']}", use_container_width=True):
+                            # AI Summary Button / Popover
+                            with st.popover("📝", use_container_width=True, help="AI Summary"):
+                                st.markdown("### AI Summary")
+                                supabase = init_supabase()
+                                existing = supabase.table("document_summaries").select("summary").eq("document_id", doc["id"]).execute()
+
+                                if existing.data:
+                                    st.write(existing.data[0]["summary"])
+                                else:
+                                    if st.button("Generate Summary", key=f"sum_{doc['id']}", type="primary"):
+                                        st.write_stream(stream_and_save_summary(doc["id"], doc["file_path"]))
+                                    else:
+                                        st.caption("Click to generate an AI summary.")
+
+                        with btn_col4:
+                            if st.button("🗑️", key=f"del_{doc['id']}", use_container_width=True, help="Delete Document"):
                                 success, msg = delete_document(doc['id'], doc['file_path'])
                                 if success:
                                     st.success(msg)
                                     st.rerun()
                                 else:
                                     st.error(msg)
-                    
+
                     st.divider()
 
 # Footer

@@ -166,21 +166,102 @@ def get_download_url(file_path: str, expires_in: int = 3600) -> Optional[str]:
 def delete_document(document_id: str, file_path: str) -> tuple[bool, str]:
     """
     Delete a document from storage and database.
-    
+
     Args:
         document_id: Document UUID in database
         file_path: File path in storage
     """
     try:
         supabase = init_supabase()
-        
+
         # Delete from storage
         supabase.storage.from_(BUCKET_NAME).remove([file_path])
-        
+
         # Delete from database
         supabase.table("documents").delete().eq("id", document_id).execute()
-        
+
         return True, "Document deleted successfully."
-        
+
     except Exception as e:
         return False, f"Failed to delete document: {e}"
+
+
+def get_or_create_summary(document_id: str, file_path: str) -> dict:
+    """
+    Get existing summary or generate new one.
+
+    Args:
+        document_id: Document UUID in database
+        file_path: File path in storage
+
+    Returns:
+        Dictionary with summary data
+    """
+    supabase = init_supabase()
+
+    # Check if summary exists
+    result = supabase.table("document_summaries").select("*").eq("document_id", document_id).execute()
+
+    if result.data:
+        return result.data[0]
+
+    # Generate new summary
+    from utils.pdf_utils import extract_text_from_pdf
+    from utils.ai_utils import generate_summary
+
+    # Download PDF
+    pdf_bytes = supabase.storage.from_(BUCKET_NAME).download(file_path)
+    text = extract_text_from_pdf(pdf_bytes)
+
+    if not text:
+        return {"summary": "Could not extract text from PDF.", "error": True}
+
+    summary_data = generate_summary(text)
+
+    # Store summary
+    supabase.table("document_summaries").insert({
+        "document_id": document_id,
+        "summary": summary_data["summary"],
+        "model_used": summary_data["model"]
+    }).execute()
+
+    return summary_data
+
+
+def stream_and_save_summary(document_id: str, file_path: str):
+    """
+    Stream summary generation and save to database when complete.
+    Yields chunks for st.write_stream().
+
+    Args:
+        document_id: Document UUID in database
+        file_path: File path in storage
+
+    Yields:
+        Text chunks from the AI model
+    """
+    from utils.pdf_utils import extract_text_from_pdf
+    from utils.ai_utils import generate_summary_stream
+
+    supabase = init_supabase()
+
+    # Download PDF
+    pdf_bytes = supabase.storage.from_(BUCKET_NAME).download(file_path)
+    text = extract_text_from_pdf(pdf_bytes)
+
+    if not text:
+        yield "Could not extract text from PDF."
+        return
+
+    # Collect full summary while streaming
+    full_summary = ""
+    for chunk in generate_summary_stream(text):
+        full_summary += chunk
+        yield chunk
+
+    # Save to database after streaming completes
+    supabase.table("document_summaries").insert({
+        "document_id": document_id,
+        "summary": full_summary,
+        "model_used": "gpt-4"
+    }).execute()
