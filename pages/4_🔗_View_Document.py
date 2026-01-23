@@ -1,10 +1,12 @@
 """
 Public View Document Page
 Accepts share_id from URL, verifies OTP, and shows document.
+Includes AI chatbot for document interaction.
 """
 import streamlit as st
-from utils.share_utils import verify_share_access, stream_shared_document_summary
+from utils.share_utils import verify_share_access, stream_shared_document_summary, get_shared_document_text
 from utils.storage_utils import get_download_url
+from utils.ai_utils import chat_with_document
 
 st.set_page_config(
     page_title="View Document | Secure Share",
@@ -38,6 +40,12 @@ if not share_id:
 # Session state to hold verified status across reruns
 if "verified_share" not in st.session_state:
     st.session_state.verified_share = None
+
+# Chat session state
+if "chat_messages" not in st.session_state:
+    st.session_state.chat_messages = []
+if "document_text" not in st.session_state:
+    st.session_state.document_text = None
 
 # Verification Screen
 if not st.session_state.verified_share:
@@ -130,9 +138,56 @@ else:
                         else:
                             st.caption("Click to generate an AI summary of this document.")
 
-            # Preview (iframe)
-            st.markdown("### Preview")
-            st.markdown(f'<iframe src="{download_url}" width="100%" height="600px"></iframe>', unsafe_allow_html=True)
+            # Tabs for Document Preview and AI Chat
+            tab_preview, tab_chat = st.tabs(["📄 Document Preview", "💬 Chat with Document"])
+
+            with tab_preview:
+                st.markdown(f'<iframe src="{download_url}" width="100%" height="600px"></iframe>', unsafe_allow_html=True)
+
+            with tab_chat:
+                st.markdown("### Ask questions about this document")
+                st.caption("The AI assistant can answer questions based on the document content.")
+
+                # Load document text if not already loaded
+                if st.session_state.document_text is None:
+                    with st.spinner("Loading document for chat..."):
+                        st.session_state.document_text = get_shared_document_text(file_path)
+
+                if not st.session_state.document_text:
+                    st.warning("Could not extract text from this document. Chat is unavailable.")
+                else:
+                    # Display chat history
+                    for message in st.session_state.chat_messages:
+                        with st.chat_message(message["role"]):
+                            st.markdown(message["content"])
+
+                    # Chat input
+                    if prompt := st.chat_input("Ask a question about this document..."):
+                        # Add user message to chat history
+                        st.session_state.chat_messages.append({"role": "user", "content": prompt})
+
+                        # Display user message
+                        with st.chat_message("user"):
+                            st.markdown(prompt)
+
+                        # Generate and display assistant response
+                        with st.chat_message("assistant"):
+                            response = st.write_stream(
+                                chat_with_document(
+                                    st.session_state.document_text,
+                                    st.session_state.chat_messages[:-1],  # Exclude current message
+                                    prompt
+                                )
+                            )
+
+                        # Add assistant response to chat history
+                        st.session_state.chat_messages.append({"role": "assistant", "content": response})
+
+                    # Clear chat button
+                    if st.session_state.chat_messages:
+                        if st.button("🗑️ Clear Chat", use_container_width=True):
+                            st.session_state.chat_messages = []
+                            st.rerun()
         else:
             st.error("Failed to generate secure download link.")
     else:

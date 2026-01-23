@@ -281,3 +281,39 @@ def stream_shared_document_summary(document_id: str, file_path: str):
 
     except Exception as e:
         yield f"Error generating summary: {e}"
+
+
+def get_shared_document_text(file_path: str) -> str:
+    """
+    Get the extracted text from a shared document.
+    Uses service key to bypass RLS for public access.
+
+    Args:
+        file_path: The storage path of the document
+
+    Returns:
+        Extracted text from the PDF, or empty string on error
+    """
+    import os
+    from supabase import create_client
+
+    url = os.getenv("SUPABASE_URL")
+    service_key = os.getenv("SUPABASE_SERVICE_KEY")
+
+    if not service_key:
+        return ""
+
+    try:
+        admin_client = create_client(url, service_key)
+
+        from utils.pdf_utils import extract_text_from_pdf
+
+        # Download PDF using service key
+        pdf_bytes = admin_client.storage.from_("documents").download(file_path)
+        text = extract_text_from_pdf(pdf_bytes)
+
+        return text or ""
+
+    except Exception as e:
+        print(f"Error extracting document text: {e}")
+        return ""
